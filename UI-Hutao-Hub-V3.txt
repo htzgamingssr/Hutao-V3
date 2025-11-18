@@ -1411,7 +1411,7 @@ local GUI = New("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling, -- giữ layer riêng
 	DisplayOrder = 999999, -- cao nhất có thể
 	IgnoreGuiInset = true, -- bỏ topbar offset Roblox
-	Name = "HutaoHubV3Ui", -- đặt tên rõ ràng (có thể tuỳ chỉnh)
+	Name = "DayLaMaUi", -- đặt tên rõ ràng (có thể tuỳ chỉnh)
 })
 Library.GUI = GUI
 ProtectGui(GUI)
@@ -6576,7 +6576,7 @@ if RunService:IsStudio() then
 end
 
 local SaveManager = {} do
-	SaveManager.Folder = "HutaoHubV3Settings"
+	SaveManager.Folder = "DayLaMaSettings"
 	SaveManager.Ignore = {}
 	SaveManager.Parser = {
 		Toggle = {
@@ -6697,7 +6697,7 @@ local SaveManager = {} do
 				end
 			end
 
-			HutaoHubV3.SettingLoaded = true
+			DayLaMa.SettingLoaded = true
 
 			return true, decoded
 		end
@@ -6899,7 +6899,7 @@ local SaveManager = {} do
 end
 
 local InterfaceManager = {} do
-	InterfaceManager.Folder = "HutaoHubV3Settings"
+	InterfaceManager.Folder = "DayLaMaSettings"
 	InterfaceManager.Settings = {
 		Acrylic = true,
 		Transparency = true,
@@ -7135,7 +7135,7 @@ function Library:CreateMinimizer(Config)
 
 	if isMobile then
 		holder = New("Frame", {
-			Name = "HutaoHubV3Minimizer",
+			Name = "DayLaMaMinimizer",
 			Parent = parentGui,
 			Size = Config.Size or UDim2.fromOffset(36, 36),
 			Position = Config.Position or UDim2.new(0.45, 0, 0.025, 0),
@@ -7145,7 +7145,7 @@ function Library:CreateMinimizer(Config)
 		})
 	else
 		holder = New("Frame", {
-			Name = "HutaoHubV3Minimizer",
+			Name = "DayLaMaMinimizer",
 			Parent = parentGui,
 			Size = Config.Size or UDim2.fromOffset(36, 36),
 			Position = Config.Position or UDim2.new(0, 300, 0, 20),
@@ -7316,9 +7316,9 @@ function Library:Notify(Config)
 end
 
 if getgenv then
-	getgenv().HutaoHubV3 = Library
+	getgenv().DayLaMa = Library
 else
-	HutaoHubV3 = Library
+	DayLaMa = Library
 end
 
 local MinimizeButton = New("TextButton", {
