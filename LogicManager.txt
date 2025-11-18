@@ -1,3 +1,57 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+
+local survivorsFolder = Workspace:WaitForChild("Players"):WaitForChild("Survivors")
+local killersFolder = Workspace:WaitForChild("Players"):WaitForChild("Killers")
+
+local LogicManager = {}
+
+LogicManager.Players = Players
+LogicManager.ReplicatedStorage = ReplicatedStorage
+LogicManager.Workspace = Workspace
+
+LogicManager.LP = LocalPlayer
+LogicManager.PlayerGui = PlayerGui
+
+LogicManager.survivorsFolder = survivorsFolder
+LogicManager.killersFolder = killersFolder
+
+function LogicManager.IsSurvivor(obj)
+    if not obj then return false end
+    local folder = LogicManager.survivorsFolder
+    if not folder then return false end
+
+    return obj:IsA("Model")
+        and obj.Parent == folder
+        and obj:FindFirstChildOfClass("Humanoid")
+end
+
+function LogicManager.IsKiller(obj)
+    if not obj then return false end
+    local folder = LogicManager.killersFolder
+    if not folder then return false end
+
+    return obj:IsA("Model")
+        and obj.Parent == folder
+        and obj:FindFirstChildOfClass("Humanoid")
+end
+
+function LogicManager.GetCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+
+function LogicManager.GetHRP(character)
+    character = character or LogicManager.GetCharacter()
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+_G.LogicManager = LogicManager
+
+
 getgenv().PizzaSystem = getgenv().PizzaSystem or {}
 
 getgenv().PizzaSystem.AimbotEnabled = getgenv().PizzaSystem.AimbotEnabled or false
@@ -6,12 +60,8 @@ getgenv().PizzaSystem.AimDistance   = getgenv().PizzaSystem.AimDistance or 100
 getgenv().PizzaSystem.AutoEatEnabled = getgenv().PizzaSystem.AutoEatEnabled or false
 getgenv().PizzaSystem.HPThreshold    = getgenv().PizzaSystem.HPThreshold or 30
 
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-
-local localPlayer = Players.LocalPlayer
-local survivorsFolder = Workspace:WaitForChild("Players"):WaitForChild("Survivors")
+local Logic = _G.LogicManager
 
 local PizzaAnimation = {
     ["114155003741146"] = true,
@@ -25,12 +75,12 @@ local currentTarget, isLockedOn, wasPlayingAnimation = nil, false, false
 local aimOffset = 2
 
 local function isEliot()
-    local char = localPlayer.Character
+    local char = Logic.GetCharacter()
     return char and EliotModels[char.Name]
 end
 
 local function getMyHumanoid()
-    local char = localPlayer.Character
+    local char = Logic.GetCharacter()
     return char and char:FindFirstChildWhichIsA("Humanoid")
 end
 
@@ -58,17 +108,17 @@ end
 
 local function getWeakestTarget()
     local list = {}
-    local myChar = localPlayer.Character
+    local myChar = Logic.GetCharacter()
     local hum = getMyHumanoid()
-    local root = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local root = Logic.GetHRP(myChar)
     if not root or not hum or hum.MaxHealth <= 0 then return nil end
 
     local myHp = hum.Health / hum.MaxHealth
 
-    for _, obj in ipairs(survivorsFolder:GetChildren()) do
+    for _, obj in ipairs(Logic.survivorsFolder:GetChildren()) do
         if obj:IsA("Model") and obj ~= myChar then
             local h = obj:FindFirstChildWhichIsA("Humanoid")
-            local hrp = obj:FindFirstChild("HumanoidRootPart")
+            local hrp = Logic.GetHRP(obj)
             if h and hrp and h.Health > 0 then
                 local dist = (hrp.Position - root.Position).Magnitude
                 if dist <= getgenv().PizzaSystem.AimDistance then
@@ -83,17 +133,16 @@ local function getWeakestTarget()
 end
 
 local function getHRP()
-    local char = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-    return char:WaitForChild("HumanoidRootPart")
+    return Logic.GetHRP()
 end
 
 local function getHP()
-    local hum = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local hum = getMyHumanoid()
     return hum and hum.Health or 0
 end
 
 local function getPizzaCF()
-    local map = Workspace:FindFirstChild("Map")
+    local map = Logic.Workspace:FindFirstChild("Map")
     local ingame = map and map:FindFirstChild("Ingame")
     if not ingame then return nil end
 
@@ -125,7 +174,7 @@ RunService.RenderStepped:Connect(function()
 
     local hum = getMyHumanoid()
     if not hum then return end
-    local root = hum.Parent:FindFirstChild("HumanoidRootPart")
+    local root = Logic.GetHRP()
     if not root then return end
 
     local attack = isPlayingPizzaAttack()
@@ -137,7 +186,7 @@ RunService.RenderStepped:Connect(function()
 
     if isLockedOn and currentTarget then
         local h = currentTarget:FindFirstChildWhichIsA("Humanoid")
-        local hrp = currentTarget:FindFirstChild("HumanoidRootPart")
+        local hrp = Logic.GetHRP(currentTarget)
         if not h or h.Health <= 0 or not hrp then
             currentTarget, isLockedOn = nil, false
         end
@@ -151,7 +200,7 @@ RunService.RenderStepped:Connect(function()
     wasPlayingAnimation = attack
 
     if attack and isLockedOn and currentTarget then
-        local hrp = currentTarget.HumanoidRootPart
+        local hrp = Logic.GetHRP(currentTarget)
         local targetPos = hrp.Position
 
         if not autoRotateDisabled then
@@ -191,13 +240,7 @@ end)
 
 
 
-
-
-
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local survivorsFolder = workspace:WaitForChild("Players"):WaitForChild("Survivors")
-
+local Logic = _G.LogicManager
 local animTrack = nil
 
 getgenv().InvisibleSystem = getgenv().InvisibleSystem or {
@@ -206,7 +249,7 @@ getgenv().InvisibleSystem = getgenv().InvisibleSystem or {
 }
 
 local function getHumanoid()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local char = Logic.GetCharacter()
     return char:FindFirstChildOfClass("Humanoid"), char
 end
 
@@ -238,57 +281,45 @@ local function stopInvisibleAnim()
 end
 
 local function isSurvivorModel(char)
-    return char and survivorsFolder:FindFirstChild(char.Name) ~= nil
+    return char and Logic.IsSurvivor(char)
 end
 
 task.spawn(function()
     while task.wait(0.4) do
-        if not getgenv().InvisibleSystem.InstantEnabled then
-            stopInvisibleAnim()
-            continue
-        end
-
         local humanoid, char = getHumanoid()
-        if humanoid and char and isSurvivorModel(char) then
-            playInvisibleAnim(humanoid)
+        if not humanoid or not char then
+            stopInvisibleAnim()
         else
-            stopInvisibleAnim()
-        end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(1)
-    if getgenv().InvisibleSystem.InstantEnabled and isSurvivorModel(char) then
-        local humanoid = char:WaitForChild("Humanoid")
-        playInvisibleAnim(humanoid)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.4) do
-        if not getgenv().InvisibleSystem.CloneEnabled then
-            stopInvisibleAnim()
-            local humanoid, char = getHumanoid()
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                char.HumanoidRootPart.Transparency = 1
+            if getgenv().InvisibleSystem.InstantEnabled and isSurvivorModel(char) then
+                playInvisibleAnim(humanoid)
+            elseif getgenv().InvisibleSystem.CloneEnabled then
+                local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+                local root = Logic.GetHRP(char)
+                if torso and torso.Transparency ~= 0 then
+                    playInvisibleAnim(humanoid)
+                    if root then root.Transparency = 0.4 end
+                else
+                    stopInvisibleAnim()
+                    if root then root.Transparency = 1 end
+                end
+            else
+                stopInvisibleAnim()
+                local root = Logic.GetHRP(char)
+                if root then root.Transparency = 1 end
             end
-            continue
         end
+    end
+end)
 
-        local humanoid, char = getHumanoid()
-        if not humanoid or not char then continue end
-
-        local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-        local root = char:FindFirstChild("HumanoidRootPart")
-
-        if torso and torso.Transparency ~= 0 then
-            playInvisibleAnim(humanoid)
-            if root then root.Transparency = 0.4 end
-        else
-            stopInvisibleAnim()
-            if root then root.Transparency = 1 end
-        end
+Logic.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(1)
+    local humanoid = char:WaitForChild("Humanoid")
+    if getgenv().InvisibleSystem.InstantEnabled and isSurvivorModel(char) then
+        playInvisibleAnim(humanoid)
+    elseif getgenv().InvisibleSystem.CloneEnabled then
+        local root = Logic.GetHRP(char)
+        if root then root.Transparency = 0.4 end
+        playInvisibleAnim(humanoid)
     end
 end)
 
