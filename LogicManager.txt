@@ -188,3 +188,108 @@ task.spawn(function()
         end
     end
 end)
+
+
+
+
+
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local survivorsFolder = workspace:WaitForChild("Players"):WaitForChild("Survivors")
+
+local animTrack = nil
+
+getgenv().InvisibleSystem = getgenv().InvisibleSystem or {
+    InstantEnabled = false,
+    CloneEnabled = false
+}
+
+local function getHumanoid()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return char:FindFirstChildOfClass("Humanoid"), char
+end
+
+local function getAnimator(humanoid)
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator", humanoid)
+    end
+    return animator
+end
+
+local function playInvisibleAnim(humanoid)
+    local animator = getAnimator(humanoid)
+    if not animTrack or not animTrack.IsPlaying then
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "rbxassetid://75804462760596"
+        animTrack = animator:LoadAnimation(anim)
+        animTrack.Looped = true
+        animTrack:Play()
+        animTrack:AdjustSpeed(0)
+    end
+end
+
+local function stopInvisibleAnim()
+    if animTrack and animTrack.IsPlaying then
+        animTrack:Stop()
+        animTrack = nil
+    end
+end
+
+local function isSurvivorModel(char)
+    return char and survivorsFolder:FindFirstChild(char.Name) ~= nil
+end
+
+task.spawn(function()
+    while task.wait(0.4) do
+        if not getgenv().InvisibleSystem.InstantEnabled then
+            stopInvisibleAnim()
+            continue
+        end
+
+        local humanoid, char = getHumanoid()
+        if humanoid and char and isSurvivorModel(char) then
+            playInvisibleAnim(humanoid)
+        else
+            stopInvisibleAnim()
+        end
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(1)
+    if getgenv().InvisibleSystem.InstantEnabled and isSurvivorModel(char) then
+        local humanoid = char:WaitForChild("Humanoid")
+        playInvisibleAnim(humanoid)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.4) do
+        if not getgenv().InvisibleSystem.CloneEnabled then
+            stopInvisibleAnim()
+            local humanoid, char = getHumanoid()
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.Transparency = 1
+            end
+            continue
+        end
+
+        local humanoid, char = getHumanoid()
+        if not humanoid or not char then continue end
+
+        local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        local root = char:FindFirstChild("HumanoidRootPart")
+
+        if torso and torso.Transparency ~= 0 then
+            playInvisibleAnim(humanoid)
+            if root then root.Transparency = 0.4 end
+        else
+            stopInvisibleAnim()
+            if root then root.Transparency = 1 end
+        end
+    end
+end)
+
+return true
