@@ -1,0 +1,190 @@
+getgenv().PizzaSystem = getgenv().PizzaSystem or {}
+
+getgenv().PizzaSystem.AimbotEnabled = getgenv().PizzaSystem.AimbotEnabled or false
+getgenv().PizzaSystem.AimDistance   = getgenv().PizzaSystem.AimDistance or 100
+
+getgenv().PizzaSystem.AutoEatEnabled = getgenv().PizzaSystem.AutoEatEnabled or false
+getgenv().PizzaSystem.HPThreshold    = getgenv().PizzaSystem.HPThreshold or 30
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+local survivorsFolder = Workspace:WaitForChild("Players"):WaitForChild("Survivors")
+
+local PizzaAnimation = {
+    ["114155003741146"] = true,
+    ["104033348426533"] = true
+}
+
+local EliotModels = {["Elliot"] = true}
+
+local autoRotateDisabled = false
+local currentTarget, isLockedOn, wasPlayingAnimation = nil, false, false
+local aimOffset = 2
+
+local function isEliot()
+    local char = localPlayer.Character
+    return char and EliotModels[char.Name]
+end
+
+local function getMyHumanoid()
+    local char = localPlayer.Character
+    return char and char:FindFirstChildWhichIsA("Humanoid")
+end
+
+local function restoreRotate()
+    local hum = getMyHumanoid()
+    if hum and autoRotateDisabled then
+        hum.AutoRotate = true
+        autoRotateDisabled = false
+    end
+end
+
+local function isPlayingPizzaAttack()
+    local hum = getMyHumanoid()
+    if not hum then return false end
+
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then return false end
+
+    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+        local id = tostring(track.Animation.AnimationId):match("%d+")
+        if id and PizzaAnimation[id] then return true end
+    end
+    return false
+end
+
+local function getWeakestTarget()
+    local list = {}
+    local myChar = localPlayer.Character
+    local hum = getMyHumanoid()
+    local root = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not root or not hum or hum.MaxHealth <= 0 then return nil end
+
+    local myHp = hum.Health / hum.MaxHealth
+
+    for _, obj in ipairs(survivorsFolder:GetChildren()) do
+        if obj:IsA("Model") and obj ~= myChar then
+            local h = obj:FindFirstChildWhichIsA("Humanoid")
+            local hrp = obj:FindFirstChild("HumanoidRootPart")
+            if h and hrp and h.Health > 0 then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist <= getgenv().PizzaSystem.AimDistance then
+                    table.insert(list, {model=obj, hp=h.Health/h.MaxHealth})
+                end
+            end
+        end
+    end
+
+    table.sort(list, function(a,b) return a.hp < b.hp end)
+    return list[1] and list[1].model or nil
+end
+
+local function getHRP()
+    local char = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+    return char:WaitForChild("HumanoidRootPart")
+end
+
+local function getHP()
+    local hum = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health or 0
+end
+
+local function getPizzaCF()
+    local map = Workspace:FindFirstChild("Map")
+    local ingame = map and map:FindFirstChild("Ingame")
+    if not ingame then return nil end
+
+    local pizza = ingame:FindFirstChild("Pizza")
+    if not pizza then return nil end
+
+    if pizza:IsA("BasePart") then
+        return pizza.CFrame
+    elseif pizza:IsA("Model") then
+        local pp = pizza.PrimaryPart or pizza:FindFirstChildWhichIsA("BasePart")
+        if pp then return pp.CFrame end
+    elseif pizza:IsA("CFrameValue") then
+        return pizza.Value
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if not getgenv().PizzaSystem.AimbotEnabled then
+        restoreRotate()
+        currentTarget, isLockedOn = nil, false
+        return
+    end
+
+    if not isEliot() then
+        restoreRotate()
+        currentTarget, isLockedOn = nil, false
+        return
+    end
+
+    local hum = getMyHumanoid()
+    if not hum then return end
+    local root = hum.Parent:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local attack = isPlayingPizzaAttack()
+
+    if attack and not isLockedOn then
+        currentTarget = getWeakestTarget()
+        isLockedOn = currentTarget ~= nil
+    end
+
+    if isLockedOn and currentTarget then
+        local h = currentTarget:FindFirstChildWhichIsA("Humanoid")
+        local hrp = currentTarget:FindFirstChild("HumanoidRootPart")
+        if not h or h.Health <= 0 or not hrp then
+            currentTarget, isLockedOn = nil, false
+        end
+    end
+
+    if not attack and wasPlayingAnimation then
+        currentTarget, isLockedOn = nil, false
+        restoreRotate()
+    end
+
+    wasPlayingAnimation = attack
+
+    if attack and isLockedOn and currentTarget then
+        local hrp = currentTarget.HumanoidRootPart
+        local targetPos = hrp.Position
+
+        if not autoRotateDisabled then
+            hum.AutoRotate = false
+            autoRotateDisabled = true
+        end
+
+        if hrp.Velocity.Magnitude > 2 then
+            targetPos += hrp.CFrame.LookVector * 3
+        end
+
+        local offset = root.CFrame.RightVector * aimOffset
+
+        root.CFrame = root.CFrame:Lerp(
+            CFrame.lookAt(root.Position, Vector3.new(targetPos.X, root.Position.Y, targetPos.Z) + offset),
+            0.99
+        )
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.9) do
+        if getgenv().PizzaSystem.AutoEatEnabled then
+            local hrp = getHRP()
+            local pizza = getPizzaCF()
+            if pizza and getHP() <= getgenv().PizzaSystem.HPThreshold then
+                local old = hrp.CFrame
+                hrp.CFrame = pizza * CFrame.new(0,1,0)
+
+                task.wait(0.2)
+                hrp.CFrame = old
+                task.wait(0.3)
+            end
+        end
+    end
+end)
