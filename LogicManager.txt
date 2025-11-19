@@ -327,12 +327,18 @@ return true
 
 
 
+
 local RunService = game:GetService("RunService")
 local Logic = _G.LogicManager
 
-local Mode = "AI Aimbot"
-local checkRadius = 18
-local backstabDelay = 0.01
+getgenv().AutoBackstab = getgenv().AutoBackstab or {}
+
+local CFG = getgenv().AutoBackstab
+CFG.Enabled = CFG.Enabled or false
+CFG.Mode = CFG.Mode or "AI Aimbot"
+CFG.Radius = CFG.Radius or 18
+CFG.Cooldown = CFG.Cooldown or false
+CFG.LastTarget = CFG.LastTarget or nil
 
 local ANIM_IDS = {
     "115194624791339",
@@ -344,9 +350,6 @@ local ANIM_IDS = {
 }
 
 local daggerButton, daggerRemote, daggerConnections = nil, nil, {}
-local enabled = false
-local cooldown = false
-local lastTarget = nil
 
 local function initDaggerButton()
     local gui = Logic.PlayerGui
@@ -356,7 +359,6 @@ local function initDaggerButton()
     daggerButton = container and container:FindFirstChild("Dagger")
     if daggerButton and daggerButton:IsA("ImageButton") then
         daggerConnections = getconnections(daggerButton.MouseButton1Click)
-        -- tìm RemoteEvent nếu có
         for _, conn in ipairs(daggerConnections) do
             local f = conn.Function
             if f and islclosure(f) then
@@ -393,6 +395,7 @@ local function useDagger()
     end
 end
 
+-- COMMON FUNCTIONS
 local function getCharacter()
     local ch = Logic.GetCharacter()
     local hrp = Logic.GetHRP(ch)
@@ -415,8 +418,8 @@ end
 
 local function teleportBehind(targetHRP, myHRP)
     local look = targetHRP.CFrame.LookVector
-    local destPos = targetHRP.Position - look * 2
-    myHRP.CFrame = CFrame.new(destPos, destPos + look)
+    local dest = targetHRP.Position - look * 2
+    myHRP.CFrame = CFrame.new(dest, dest + look)
 end
 
 local function isBehindTarget(targetHRP, myHRP)
@@ -426,91 +429,89 @@ local function isBehindTarget(targetHRP, myHRP)
 end
 
 local function getNearbyKillers(position)
-    local killers = {}
+    local list = {}
     for _, plr in ipairs(Logic.Players:GetPlayers()) do
         if plr ~= Logic.LP and plr.Character then
-            local char = plr.Character
-            local hrp = Logic.GetHRP(char) or char.PrimaryPart
+            local hrp = Logic.GetHRP(plr.Character)
             if hrp then
                 local dist = (hrp.Position - position).Magnitude
-                if dist <= checkRadius then
-                    table.insert(killers, {model = char, hrp = hrp, dist = dist})
+                if dist <= CFG.Radius then
+                    table.insert(list, {model = plr.Character, hrp = hrp, dist = dist})
                 end
             end
         end
     end
-    return killers
+    return list
 end
 
 local function getNearbyAIKillers(hrp)
-    local killers = {}
-    local killersFolder = Logic.Workspace:WaitForChild("Players"):WaitForChild("Killers")
+    local list = {}
+    local killersFolder = Logic.Workspace.Players.Killers
     for _, killer in ipairs(killersFolder:GetChildren()) do
         local kHRP = Logic.GetHRP(killer)
         if kHRP then
             local dist = (kHRP.Position - hrp.Position).Magnitude
-            if dist <= checkRadius then
-                table.insert(killers, {model = killer, hrp = kHRP, dist = dist})
+            if dist <= CFG.Radius then
+                table.insert(list, {model = killer, hrp = kHRP, dist = dist})
             end
         end
     end
-    return killers
+    return list
 end
 
 RunService.Heartbeat:Connect(function()
-    if not enabled or cooldown then return end
+    if not CFG.Enabled or CFG.Cooldown then return end
+
     local char, humanoid, myHRP = getCharacter()
     if not (char and humanoid and myHRP) then return end
     if char.Name ~= "TwoTime" then return end
 
-    if Mode == "Player Aimbot" then
+    if CFG.Mode == "Player Aimbot" then
         if isPlayingTargetAnimation(humanoid) then
             local killers = getNearbyKillers(myHRP.Position)
             if #killers > 0 then
                 table.sort(killers, function(a,b) return a.dist < b.dist end)
                 local target = killers[1]
-                cooldown = true
+
+                CFG.Cooldown = true
                 local start = tick()
+
                 local conn
                 conn = RunService.Heartbeat:Connect(function()
-                    if not (char and target.hrp and char.Parent and target.hrp.Parent) then
-                        if conn then conn:Disconnect() end
-                        cooldown = false
-                        return
-                    end
                     if tick() - start >= 0.7 then
-                        if conn then conn:Disconnect() end
-                        task.delay(1, function() cooldown = false end)
+                        conn:Disconnect()
+                        task.delay(1, function() CFG.Cooldown = false end)
                         return
                     end
+
                     teleportBehind(target.hrp, myHRP)
                     useDagger()
                 end)
             end
         end
+
     else
         local killers = getNearbyAIKillers(myHRP)
         if #killers > 0 then
             table.sort(killers, function(a,b) return a.dist < b.dist end)
             local target = killers[1]
-            if target.model ~= lastTarget and isBehindTarget(target.hrp, myHRP) then
-                cooldown = true
-                lastTarget = target.model
+
+            if target.model ~= CFG.LastTarget and isBehindTarget(target.hrp, myHRP) then
+                CFG.Cooldown = true
+                CFG.LastTarget = target.model
                 local start = tick()
+
                 local conn
                 conn = RunService.Heartbeat:Connect(function()
-                    if not (char and char.Parent and target.hrp and target.hrp.Parent) then
-                        if conn then conn:Disconnect() end
-                        return
-                    end
                     if tick() - start >= 0.7 then
-                        if conn then conn:Disconnect() end
+                        conn:Disconnect()
                         task.delay(10, function()
-                            cooldown = false
-                            lastTarget = nil
+                            CFG.Cooldown = false
+                            CFG.LastTarget = nil
                         end)
                         return
                     end
+
                     teleportBehind(target.hrp, myHRP)
                     useDagger()
                 end)
@@ -519,13 +520,11 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-Logic.LP.CharacterAdded:Connect(function()
-    task.wait(1)
-    print("🔄 Character respawned, Auto Backstab vẫn hoạt động nếu model = 'TwoTime'.")
-end)
-
 _G.AutoBackstabLogic = {
-    SetEnabled = function(state) enabled = state end,
-    SetMode = function(mode) Mode = mode end,
-    SetRadius = function(r) checkRadius = r end,
+    SetEnabled = function(v) CFG.Enabled = v end,
+    SetMode = function(v) CFG.Mode = v end,
+    SetRadius = function(v) CFG.Radius = v end,
 }
+
+
+
