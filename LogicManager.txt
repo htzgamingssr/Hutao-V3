@@ -680,3 +680,373 @@ _G.VoidRushLogic = {
     end
 }
 
+
+
+local MAX_WAIT = 10
+local waited = 0
+while not _G.LogicManager and waited < MAX_WAIT do
+    waited = waited + 0.1
+    task.wait(0.1)
+end
+local Logic = _G.LogicManager
+if not Logic then
+    warn("[AimbotLogic] _G.LogicManager not found after wait; will try to use globals where possible.")
+    Logic = {
+        Players = game:GetService("Players"),
+        ReplicatedStorage = game:GetService("ReplicatedStorage"),
+        Workspace = game:GetService("Workspace"),
+        LP = game:GetService("Players").LocalPlayer,
+        PlayerGui = nil,
+        survivorsFolder = game:GetService("Workspace"):WaitForChild("Players"):WaitForChild("Survivors")
+    }
+end
+
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
+local ReplicatedStorage = Logic.ReplicatedStorage or game:GetService("ReplicatedStorage")
+local Players = Logic.Players
+local LocalPlayer = Logic.LP
+
+local cfg = {
+    active = false,
+    useOffset = true,
+    predictionMode = "Speed",
+    aimMode = "Normal",
+    aimDuration = 1.7,
+    fasterDuration = 1.5,
+    spinDuration = 0.5,
+    aimTargets = {"Slasher", "c00lkidd", "JohnDoe", "1x1x1x1", "Noli", "Guest 666", "Sixer"},
+
+    autoCoinflip = false,
+    coinflipTargetCharge = 3,
+    coinflipCooldown = 0.15,
+    lastCoinflipTime = 0,
+
+    blockCoinflipWhenClose = true,
+    coinflipBlockDist = 50,
+}
+
+local Humanoid, HRP = nil, nil
+local originalWS, originalJP, originalAutoRotate = nil, nil, nil
+local aiming = false
+local prevFlintVisibleAim = false
+local lastTriggerTime = 0
+
+local RemoteEvent
+pcall(function()
+    RemoteEvent = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"):WaitForChild("RemoteEvent")
+end)
+
+local function setupCharacter(char)
+    if not char then return end
+    Humanoid = char:WaitForChild("Humanoid")
+    HRP = char:WaitForChild("HumanoidRootPart")
+    Humanoid.Died:Connect(function()
+        aiming = false
+        prevFlintVisibleAim = false
+        originalWS, originalJP, originalAutoRotate = nil, nil, nil
+    end)
+end
+
+if LocalPlayer and LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
+if LocalPlayer then LocalPlayer.CharacterAdded:Connect(setupCharacter) end
+
+local function getValidTarget()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local char = plr.Character
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                for _, targetName in ipairs(cfg.aimTargets) do
+                    if char.Name:lower():find(targetName:lower()) then
+                        return hrp
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getPingSeconds()
+    local ok, pingStat = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"] end)
+    if ok and pingStat then return pingStat:GetValue() / 1000 end
+    return 0.1
+end
+
+local function isFlintlockVisible()
+    if not (LocalPlayer and LocalPlayer.Character) then return false end
+    local flint = LocalPlayer.Character:FindFirstChild("Flintlock", true)
+    if not flint then return false end
+    if not (flint:IsA("BasePart") or flint:IsA("MeshPart") or flint:IsA("UnionOperation")) then
+        flint = flint:FindFirstChildWhichIsA("BasePart", true)
+        if not flint then return false end
+    end
+    return flint.Transparency < 1
+end
+
+local movementThreshold = 0.5
+local function getPredictedAimPosPing(targetHRP)
+    local ping = getPingSeconds()
+    local velocity = targetHRP.Velocity
+    if velocity.Magnitude <= movementThreshold then return targetHRP.Position end
+    return targetHRP.Position + (velocity * ping)
+end
+
+local function getPredictedAimPosInfrontHRPPing(targetHRP)
+    local ping = getPingSeconds()
+    local studs = ping * 60
+    if targetHRP.Velocity.Magnitude <= movementThreshold then return targetHRP.Position end
+    return targetHRP.Position + (targetHRP.CFrame.LookVector * studs)
+end
+
+local function computeAimPos(targetHRP)
+    if cfg.predictionMode == "Ping" then
+        return getPredictedAimPosPing(targetHRP)
+    elseif cfg.predictionMode == "front" then
+        return targetHRP.Position + targetHRP.CFrame.LookVector * 4
+    elseif cfg.predictionMode == "No Lag" then
+        return getPredictedAimPosInfrontHRPPing(targetHRP)
+    else
+        local velocity = targetHRP.Velocity
+        if velocity.Magnitude > 0.1 then
+            if cfg.useOffset and HRP then
+                local ok, toTarget = pcall(function() return (targetHRP.Position - HRP.Position).Unit end)
+                if not ok then return targetHRP.Position end
+                local moveDir = velocity.Unit
+                local dot = toTarget:Dot(moveDir)
+                if math.abs(dot) < 0.85 then
+                    return targetHRP.Position + velocity * (4 / 60)
+                else
+                    return targetHRP.Position
+                end
+            else
+                return targetHRP.Position
+            end
+        else
+            return targetHRP.Position
+        end
+    end
+end
+
+local function safeSetCFrame(newCF)
+    if typeof(newCF) == "CFrame" and tostring(newCF) ~= "nan" and HRP then
+        HRP.CFrame = newCF
+    end
+end
+
+local function faceInstant(toPos)
+    if not HRP or not toPos then return end
+    local fromPos = HRP.Position
+    if (toPos - fromPos).Magnitude < 0.01 then return end
+    local lookAt = Vector3.new(toPos.X, fromPos.Y, toPos.Z)
+    local targetCF = CFrame.new(fromPos, lookAt)
+    safeSetCFrame(HRP.CFrame:Lerp(targetCF, 0.99))
+end
+
+local function getAbilityContainer()
+    local ok, container = pcall(function()
+        local gui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not gui then return nil end
+        local mainUI = gui:FindFirstChild("MainUI")
+        if not mainUI then return nil end
+        return mainUI:FindFirstChild("AbilityContainer")
+    end)
+    if ok then return container end
+    return nil
+end
+
+local function tryActivateButton(button)
+    if not button then return false end
+    pcall(function() if button.Activate then button:Activate() end end)
+    local ok, conns = pcall(function()
+        if type(getconnections) == "function" and button.MouseButton1Click then
+            return getconnections(button.MouseButton1Click)
+        end
+        return nil
+    end)
+    if ok and conns then
+        for _, conn in ipairs(conns) do
+            pcall(function()
+                if conn.Function then conn.Function()
+                elseif conn.func then conn.func()
+                elseif conn.Fire then conn.Fire() end
+            end)
+        end
+    end
+    pcall(function() if button.Activated then button.Activated:Fire() end end)
+    pcall(function() if button.MouseButton1Click then button.MouseButton1Click:Fire() end end)
+    return true
+end
+
+local function findAbilityButtonByName(name)
+    local container = getAbilityContainer()
+    if not container then return nil end
+    local btn = container:FindFirstChild(name)
+    if btn then return btn end
+    local lname = name:lower()
+    for _, child in ipairs(container:GetChildren()) do
+        if child.Name and child.Name:lower():find(lname) then return child end
+        local found = child:FindFirstChildWhichIsA("ImageButton") or child:FindFirstChildWhichIsA("TextButton")
+        if found and found.Name and found.Name:lower():find(lname) then
+            return found
+        end
+    end
+    return nil
+end
+
+local function clickCoinflipButton()
+    local tryNames = {"CoinFlip", "Coin", "Reroll"}
+    for _, n in ipairs(tryNames) do
+        local b = findAbilityButtonByName(n)
+        if b then
+            if tryActivateButton(b) then return true end
+        end
+    end
+    return false
+end
+
+local function findRerollContainer()
+    local container = getAbilityContainer()
+    if not container then return nil end
+    local reroll = container:FindFirstChild("Reroll") or container:FindFirstChild("RerollAbility") or nil
+    if reroll then return reroll end
+    for _, child in ipairs(container:GetChildren()) do
+        for _, obj in ipairs(child:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) and obj.Text and tostring(obj.Text):match("%d") then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function getNearbyMaxNumber()
+    local reroll = findRerollContainer()
+    if not reroll then return nil end
+    local maxNum = nil
+    for _, obj in ipairs(reroll:GetDescendants()) do
+        if (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) and obj.Text then
+            for num in tostring(obj.Text):gmatch("%d+") do
+                local n = tonumber(num)
+                if n then
+                    if not maxNum or n > maxNum then maxNum = n end
+                end
+            end
+        end
+    end
+    return maxNum
+end
+
+RunService.RenderStepped:Connect(function()
+    if cfg.active and Humanoid and HRP then
+        local isVisible = isFlintlockVisible()
+        if isVisible and not prevFlintVisibleAim and not aiming then
+            lastTriggerTime = tick()
+            aiming = true
+        end
+        prevFlintVisibleAim = isVisible
+
+        if aiming then
+            local elapsed = tick() - lastTriggerTime
+
+            if cfg.aimMode == "Reflex" then
+                if elapsed <= cfg.spinDuration then
+                    local spinProgress = elapsed / cfg.spinDuration
+                    local spinAngle = math.rad(360 * spinProgress)
+                    safeSetCFrame(CFrame.new(HRP.Position) * CFrame.Angles(0, spinAngle, 0))
+                elseif elapsed <= cfg.spinDuration + 0.7 then
+                    if not originalWS then
+                        originalWS, originalJP, originalAutoRotate = Humanoid.WalkSpeed, Humanoid.JumpPower, Humanoid.AutoRotate
+                    end
+                    Humanoid.AutoRotate = false
+                    HRP.AssemblyAngularVelocity = Vector3.zero
+                    local targetHRP = getValidTarget()
+                    if targetHRP then
+                        faceInstant(computeAimPos(targetHRP))
+                    end
+                else
+                    aiming = false
+                    if originalWS then
+                        Humanoid.WalkSpeed, Humanoid.JumpPower, Humanoid.AutoRotate =
+                            originalWS, originalJP, originalAutoRotate
+                        originalWS, originalJP, originalAutoRotate = nil, nil, nil
+                    end
+                end
+            else
+                local duration = (cfg.aimMode == "Faster") and cfg.fasterDuration or cfg.aimDuration
+                if elapsed <= duration then
+                    if not originalWS then
+                        originalWS, originalJP, originalAutoRotate = Humanoid.WalkSpeed, Humanoid.JumpPower, Humanoid.AutoRotate
+                    end
+                    Humanoid.AutoRotate = false
+                    HRP.AssemblyAngularVelocity = Vector3.zero
+                    local targetHRP = getValidTarget()
+                    if targetHRP then
+                        faceInstant(computeAimPos(targetHRP))
+                    end
+                else
+                    aiming = false
+                    if originalWS then
+                        Humanoid.WalkSpeed, Humanoid.JumpPower, Humanoid.AutoRotate =
+                            originalWS, originalJP, originalAutoRotate
+                        originalWS, originalJP, originalAutoRotate = nil, nil, nil
+                    end
+                end
+            end
+        end
+    end
+
+    if cfg.autoCoinflip then
+        local tooClose = false
+        if cfg.blockCoinflipWhenClose then
+            local targetHRP = getValidTarget()
+            if targetHRP and HRP then
+                if (targetHRP.Position - HRP.Position).Magnitude <= cfg.coinflipBlockDist then
+                    tooClose = true
+                end
+            end
+        end
+
+        if not tooClose then
+            local maxNum = getNearbyMaxNumber()
+            if not maxNum or maxNum < cfg.coinflipTargetCharge then
+                if tick() - cfg.lastCoinflipTime >= cfg.coinflipCooldown then
+                    cfg.lastCoinflipTime = tick()
+                    local ok = clickCoinflipButton()
+                    if not ok and RemoteEvent then
+                        pcall(function()
+                            RemoteEvent:FireServer("UseActorAbility", "CoinFlip")
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local AimbotManager = {}
+
+function AimbotManager.SetActive(v) cfg.active = not not v end
+function AimbotManager.GetActive() return cfg.active end
+
+function AimbotManager.SetUseOffset(v) cfg.useOffset = not not v end
+function AimbotManager.GetUseOffset() return cfg.useOffset end
+
+function AimbotManager.SetPredictionMode(v) if type(v)=="string" then cfg.predictionMode = v end end
+function AimbotManager.GetPredictionMode() return cfg.predictionMode end
+
+function AimbotManager.SetAimMode(v)
+    if type(v) == "string" then cfg.aimMode = v end
+end
+function AimbotManager.GetAimMode() return cfg.aimMode end
+
+function AimbotManager.SetCoinflipEnabled(v) cfg.autoCoinflip = not not v end
+function AimbotManager.SetCoinflipTargetScore(n) n = tonumber(n) if n then cfg.coinflipTargetCharge = n end end
+function AimbotManager.SetCoinflipCooldown(n) n = tonumber(n) if n then cfg.coinflipCooldown = n end end
+function AimbotManager.SetCoinflipDistance(n) n = tonumber(n) if n then cfg.coinflipBlockDist = n end end
+function AimbotManager.SetBlockCoinflipWhenClose(v) cfg.blockCoinflipWhenClose = not not v end
+
+function AimbotManager.GetConfig() return cfg end
+
+_G.AimbotManager = AimbotManager
