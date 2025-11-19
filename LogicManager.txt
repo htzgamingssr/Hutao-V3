@@ -323,7 +323,6 @@ Logic.Players.LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
-return true
 
 
 
